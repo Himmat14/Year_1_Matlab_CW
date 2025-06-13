@@ -1,0 +1,143 @@
+%BET Function%
+%Himmat Kaul%
+%CID%
+%defines BET function with inputs env and veh structured arrays
+function Parameters = BET(env,veh)
+
+%extracts blade radius
+R = veh.rad;
+%extracts non dim blade radial stations
+r = veh.r;
+%defines Discretisation interval
+dr = (r(2)-r(1));
+
+%Local Mars Planet Data%
+%extracts density from env data
+density = env(3).rho;
+%extracts g value from env data
+g = env(3).g;
+%extracts speed of sound value from env structure
+a = env(3).a;
+
+% extracts rotor RPM from veh structure
+RPM = veh.rpm;
+% extracts number of rotors from veh structure
+n_rotors = veh.nr;
+%extracts number of blades per rotor from veh structure
+n_blades = veh.nb;
+
+%extracts vehicle mass from veh structure
+mass = veh.mass;
+%calculates vehicle weight under local gravity
+weight = g*mass;
+%calculates swept rotor area
+A = pi*(R^2);
+
+%defines Thrust split between upper and lower rotors
+Thrust = [0.5897,0.4103];
+%defines collective values for upper and lower blades
+collective = [veh.uppercoll,veh.lowercoll];
+
+%prealocates CT,CP and CPp splits for upper and lower blades 
+CT_split = [0,0];
+CP_split = [0,0];
+CPp_split = [0,0]; 
+
+%loops for 2 itteations for 1st for upper rotor and 2nd for lower rotor
+for j = [1,2]
+
+    %caluclates induced velocity
+    Vi = sqrt((Thrust(j)*weight)/(2*density*A));
+    %calcualtes 
+    U_T = r.*(RPM*R*(2*pi/60));
+    %calculates induced angle of attack in degrees
+    induced_aoa = atand(Vi./U_T);
+    %calculates the free stream velocity 
+    U = sqrt(Vi.^2 + U_T.^2);
+    %extracts the twist disttibution from the veh structure
+    theta_twist = veh.twistdistribution;
+    %calculates the angle of attack of of all stations along the blade 
+    alpha = theta_twist - induced_aoa + collective(j);
+    %calculatyes the mach number along the blade stations
+    Mach_num = U./a;
+    %extrcts the chord distrivbuition from the veh structure and converts
+    %to dimentional radius 
+    c = veh.chorddistribution.*R;
+   
+    for i = 1:length(r)
+        %Choosing Cl and Cd values based on Mach number
+        if Mach_num(i) >=0 && Mach_num(i) <=0.3
+            %extracts the cl and cd values from the veh structure if mach
+            %number is closest to M=0.2 and interpolates at angle of attack
+            %at radial station
+            Cl(i) = interp1(veh.cl(:,1),veh.cl(:,2),alpha(i));
+            Cd(i) = interp1(veh.cd(:,1),veh.cd(:,2),alpha(i));
+        elseif Mach_num(i) >0.3 && Mach_num(i) <=0.5
+            %extracts the cl and cd values from the veh structure if mach
+            %number is closest to M=0.4 and interpolates at angle of attack
+            %at radial station
+            Cl(i) = interp1(veh.cl(:,3),veh.cl(:,4),alpha(i));
+            Cd(i) = interp1(veh.cd(:,3),veh.cd(:,4),alpha(i));
+        elseif Mach_num(i)>0.5 && Mach_num(i)<=0.7
+            %extracts the cl and cd values from the veh structure if mach
+            %number is closest to M=0.6 and interpolates at angle of attack
+            %at radial station
+            Cl(i) = interp1(veh.cl(:,5),veh.cl(:,6),alpha(i));
+            Cd(i) = interp1(veh.cd(:,5),veh.cd(:,6),alpha(i));
+        elseif Mach_num(i)>0.7 && Mach_num(i)<=0.85
+            %extracts the cl and cd values from the veh structure if mach
+            %number is closest to M=0.8 and interpolates at angle of attack
+            %at radial station
+            Cl(i) = interp1(veh.cl(:,7),veh.cl(:,8),alpha(i));
+            Cd(i) = interp1(veh.cd(:,7),veh.cd(:,8),alpha(i));
+        else
+            %extracts the cl and cd values from the veh structure if mach
+            %number is closest to M=0.9 and interpolates at angle of attack
+            %at radial station
+            Cl(i) = interp1(veh.cl(:,9),veh.cl(:,10),alpha(i));
+            Cd(i) = interp1(veh.cd(:,9),veh.cd(:,10),alpha(i));
+        end
+    end
+
+    %differential parameters%
+    %calculates differential of CT
+    dCT = 0.5*((n_blades.*c)/(pi*R)).*Cl.*((r).^2).*dr;
+    %calculates differential of CP
+    dCP = 0.5*((n_blades.*c)/(pi*R)).*(deg2rad(induced_aoa).*Cl+Cd).*((r).^3).*dr;
+    %calculates differential of CPp
+    dCPp = 0.5*((n_blades.*c)/(pi*R)).*Cd.*((r).^3).*dr;
+
+    %calculates the Intergral of all differential CT values using a rectangualar
+    %intergration sum for each blade
+    CT_split(j) = sum(dCT);
+    %calculates the Intergral of all differential CP values using a rectangualar
+    %intergration sum for each blade
+    CP_split(j) = sum(dCP);
+    %calculates the Intergral of all differential CPp values using a rectangualar
+    %intergration sum for each blade
+    CPp_split(j) = sum(dCPp);
+    
+end
+%defines the coaxial interferance factor
+k_int = 1.2657;
+%defines the induced power factor
+k = 1.15;
+%sums the CT from both blades to find total CT 
+CT = sum(CT_split);
+%sums the CP from both blades to find total CP 
+CP = sum(CP_split);
+%sums the CPp from both blades to find total CPp 
+CPp = sum(CPp_split);
+% defines upper and lower CT variables for FM calculation
+%CT of upper blade
+CTupper = CT_split(1);
+%CT of lower blade
+CTlower = CT_split(2);
+
+%Calculates intermediate variable A for FM calculation 
+A  = k_int*((CTlower^1.5)/(2^0.5))*(1+((CTupper/CTlower)^1.5));
+%calculates the FM using the A intermediate variable
+FM = A/((A*k)+CPp);
+%Defines the output Array of performance Parameters
+Parameters = [FM ,CT, CP,CPp];
+end
